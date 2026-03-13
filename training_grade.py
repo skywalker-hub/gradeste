@@ -94,7 +94,7 @@ class DataSplits:
     - Test: Entire IMDB test split (final evaluation only)
     """
     
-    def __init__(self, config: Config, tokenizer):
+    def __init__(self, config: Config, tokenizer, dataset_path: Optional[str] = None):
         self.config = config
         self.tokenizer = tokenizer
         
@@ -102,8 +102,13 @@ class DataSplits:
         print("LOADING AND SPLITTING DATA")
         print("="*60)
         
-        # Load full dataset
-        full_dataset = load_dataset("imdb")
+        # Load full dataset (from local path or HuggingFace)
+        if dataset_path and Path(dataset_path).exists():
+            from datasets import load_from_disk
+            print(f"  Loading dataset from local path: {dataset_path}")
+            full_dataset = load_from_disk(dataset_path)
+        else:
+            full_dataset = load_dataset("imdb")
         train_data = full_dataset["train"].shuffle(seed=config.seed)
         test_data = full_dataset["test"]
         
