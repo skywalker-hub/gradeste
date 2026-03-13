@@ -1344,8 +1344,20 @@ class Arguments:
     seed: int = 42
 
 
-def main(output_dir: str = "/data/results"):
+def main(
+    output_dir: str = "/data/results",
+    method: Optional[str] = None,
+    base_model: Optional[str] = None,
+    dataset_path: Optional[str] = None,
+    max_steps: Optional[int] = None,
+):
     args = Arguments(output_dir=output_dir)
+    if method:
+        args.method = method
+    if base_model:
+        args.base_model = base_model
+    if max_steps:
+        args.max_steps = max_steps
     
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -1362,14 +1374,12 @@ def main(output_dir: str = "/data/results"):
         print("WARNING: CUDA not available, using CPU")
         config.device = "cpu"
     
-    # Load tokenizer for data splits
     tokenizer = AutoTokenizer.from_pretrained(config.base_model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "left"  # Required for decoder-only models
+    tokenizer.padding_side = "left"
     
-    # Create data splits ONCE (shared across all methods)
-    data_splits = DataSplits(config, tokenizer)
+    data_splits = DataSplits(config, tokenizer, dataset_path=dataset_path)
     
     # Train reward model on its dedicated split
     rm_save_path = Path(config.output_dir) / "reward_model.pt"
