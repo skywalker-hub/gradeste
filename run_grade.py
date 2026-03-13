@@ -24,8 +24,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run GRADE training")
     parser.add_argument("--model_path", type=str, default="/root/autodl-tmp/Qwen3-4B",
                         help="HuggingFace model name or local path")
-    parser.add_argument("--dataset_path", type=str, default="/root/autodl-tmp/imdb_dataset",
-                        help="Local path to IMDB dataset saved via save_to_disk")
+    parser.add_argument("--dataset_path", type=str, default=None,
+                        help="Local path to IMDB dataset saved via save_to_disk. "
+                             "If not set, downloads from HuggingFace automatically.")
     parser.add_argument("--max_steps", type=int, default=50,
                         help="Training steps (50 for quick test, 250+ for real run)")
     parser.add_argument("--output_dir", type=str, default="./results")
