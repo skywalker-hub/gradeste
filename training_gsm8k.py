@@ -64,7 +64,7 @@ class Config:
 
     # Generation
     max_prompt_length: int = 256
-    max_reasoning_tokens: int = 256
+    max_reasoning_tokens: int = 400
     min_reasoning_tokens: int = 16
     max_answer_tokens: int = 16
     max_eval_tokens: int = 512
