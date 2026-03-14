@@ -64,9 +64,10 @@ class Config:
 
     # Generation
     max_prompt_length: int = 256
-    max_reasoning_tokens: int = 128
+    max_reasoning_tokens: int = 256
     min_reasoning_tokens: int = 16
     max_answer_tokens: int = 16
+    max_eval_tokens: int = 512
 
     # Gumbel-Softmax
     tau_start: float = 2.0
@@ -866,7 +867,7 @@ def evaluate_math(
     correct = 0
     total = 0
     samples: List[dict] = []
-    max_gen = config.max_reasoning_tokens + config.max_answer_tokens
+    max_gen = config.max_eval_tokens
 
     with torch.no_grad():
         for batch in dataloader:
@@ -903,7 +904,7 @@ def evaluate_math(
                 if len(samples) < 5:
                     samples.append(
                         {
-                            "generated": generated[:300],
+                            "generated": generated[:600],
                             "predicted": predicted,
                             "ground_truth": gt_answers[i],
                             "correct": is_correct,
@@ -1096,7 +1097,7 @@ def train_method(
                     print(
                         f"  [{si+1}] {mark}  pred={s['predicted']}  gt={s['ground_truth']}"
                     )
-                    print(f"      {s['generated'][:200]}")
+                    print(f"      {s['generated'][:500]}")
                     print()
 
             step += 1
@@ -1181,7 +1182,7 @@ def train_method(
 class Arguments:
     method: str = "all"
     base_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    max_steps: int = 2000
+    max_steps: int = 50
     batch_size: int = 1
     gradient_accumulation_steps: int = 16
     learning_rate: float = 1e-5
