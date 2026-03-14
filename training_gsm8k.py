@@ -16,7 +16,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig, get_peft_model, TaskType
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from tqdm import tqdm
 import wandb
 from dataclasses import dataclass
@@ -170,7 +170,7 @@ class GSM8KDataSplits:
         self.tokenizer = tokenizer
 
         if dataset_path and Path(dataset_path).exists():
-            dataset = load_dataset(dataset_path)
+            dataset = load_from_disk(dataset_path)
         else:
             dataset = load_dataset("openai/gsm8k", "main")
 
