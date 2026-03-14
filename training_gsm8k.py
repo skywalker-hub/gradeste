@@ -31,14 +31,12 @@ import re
 # CONSTANTS
 # ============================================================================
 
-ANSWER_DELIMITER = "####"
+ANSWER_DELIMITER = "\\boxed{"
 
 SYSTEM_PROMPT = (
-    "A conversation between User and Assistant. The user asks a math question, "
-    "and the assistant solves it. The assistant first thinks about the reasoning "
-    "process in the mind and then provides the user with the answer. The "
-    f"final answer is provided after the {ANSWER_DELIMITER} tag, i.e., "
-    f"{{reasoning process}} {ANSWER_DELIMITER} {{answer}}."
+    "Solve the math problem step by step. Be concise. "
+    "Put your final numerical answer inside \\boxed{}. "
+    "Example: The total is 3 + 4 = 7. \\boxed{7}"
 )
 
 # ============================================================================
@@ -103,11 +101,11 @@ class Config:
 def extract_answer_from_text(text: str) -> Optional[str]:
     """Extract numerical answer from generated text using multiple patterns."""
 
-    # Pattern 1: \boxed{number}
-    m = re.search(r"\\boxed\{([^}]+)\}", text)
+    # Pattern 1: \boxed{number} (highest priority)
+    m = re.search(r"\\boxed\{([^}]*)\}", text)
     if m:
         ans = m.group(1).replace(",", "").strip()
-        if re.match(r"-?[\d.]+$", ans):
+        if ans:
             return ans
 
     # Pattern 2: "The (final) answer is NUMBER"
@@ -115,17 +113,10 @@ def extract_answer_from_text(text: str) -> Optional[str]:
     if m:
         return m.group(1).replace(",", "").strip()
 
-    # Pattern 3: #### followed directly by a number (skip #### Step, #### Reasoning, etc.)
-    matches = list(re.finditer(r"####\s*(-?[\d,]+\.?\d*)\s", text))
+    # Pattern 3: #### followed directly by a number (not by words)
+    matches = list(re.finditer(r"####\s*(-?\d[\d,]*\.?\d*)", text))
     if matches:
         return matches[-1].group(1).replace(",", "").strip()
-
-    # Pattern 4: last line contains just a number
-    for line in reversed(text.strip().splitlines()):
-        line = line.strip()
-        m = re.match(r"^(-?[\d,]+\.?\d*)$", line)
-        if m:
-            return m.group(1).replace(",", "").strip()
 
     return None
 
@@ -214,7 +205,8 @@ class GSM8KDataSplits:
     def _process(self, example: dict) -> dict:
         question = example["question"]
         answer_text = example["answer"]
-        final_answer = normalize_answer(answer_text.split(ANSWER_DELIMITER)[-1])
+        # GSM8K raw data always uses "####" as delimiter (regardless of our ANSWER_DELIMITER)
+        final_answer = normalize_answer(answer_text.split("####")[-1])
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -231,8 +223,10 @@ class GSM8KDataSplits:
             return_tensors="pt",
         )
 
+        # Encode "answer}" — the \boxed{ prefix is the delimiter (forced/detected),
+        # so we only teacher-force the number + closing brace
         answer_tokens = self.tokenizer.encode(
-            " " + final_answer, add_special_tokens=False
+            final_answer + "}", add_special_tokens=False
         )
         answer_tokens = answer_tokens[: self.config.max_answer_tokens]
         answer_len = len(answer_tokens)
