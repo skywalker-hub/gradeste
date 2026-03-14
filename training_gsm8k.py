@@ -355,6 +355,7 @@ class GumbelMathTrainer:
         self.step_count = 0
         self.accum_count = 0
 
+        self.delimiter_text = ANSWER_DELIMITER  # e.g. "\\boxed{"
         self.delimiter_token_ids = tokenizer.encode(
             ANSWER_DELIMITER, add_special_tokens=False
         )
@@ -371,8 +372,12 @@ class GumbelMathTrainer:
         return outputs.logits[:, -1, :]
 
     def _check_delimiter(self, history: List[int]) -> bool:
-        d = self.delimiter_token_ids
-        return len(history) >= len(d) and history[-len(d) :] == d
+        if len(history) < 2:
+            return False
+        # Decode recent tokens and check for delimiter text
+        # This handles tokenization differences (e.g. "\boxed" as 1 vs 2 tokens)
+        recent_text = self.tokenizer.decode(history[-8:], skip_special_tokens=True)
+        return self.delimiter_text in recent_text
 
     def step(
         self,
