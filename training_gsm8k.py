@@ -59,8 +59,8 @@ class Config:
     learning_rate: float = 1e-5
     batch_size: int = 1
     gradient_accumulation_steps: int = 16
-    max_steps: int = 2000
-    eval_every: int = 100
+    max_steps: int = 50
+    eval_every: int = 1
 
     # Generation
     max_prompt_length: int = 256
@@ -520,6 +520,11 @@ class GumbelMathTrainer:
 
         self.step_count += 1
 
+        # Decode reasoning tokens for debug output
+        reasoning_text = self.tokenizer.decode(
+            hard_token_history, skip_special_tokens=True
+        )
+
         result = {
             "loss": loss.item(),
             "kl": kl_sum / max(reasoning_len, 1),
@@ -528,6 +533,7 @@ class GumbelMathTrainer:
             "found_delimiter": float(found_delimiter),
             "grad_norm_mean": np.mean(grad_norms) if grad_norms else 0,
             "grad_norm_std": np.std(grad_norms) if grad_norms else 0,
+            "reasoning_text": reasoning_text,
         }
 
         del answer_ce, policy_embeds, loss
@@ -882,8 +888,8 @@ def evaluate_math(
             )
 
             for i in range(len(outputs)):
-                prompt_len = attention_mask[i].sum().item()
-                gen_ids = outputs[i][int(prompt_len) :]
+                prompt_len = input_ids.shape[1]
+                gen_ids = outputs[i][prompt_len:]
                 generated = tokenizer.decode(gen_ids, skip_special_tokens=True)
                 predicted = extract_answer_from_text(generated)
 
@@ -1031,10 +1037,27 @@ def train_method(
             for k, v in metrics.items():
                 results[k].append(v)
 
+            # Log non-text metrics to wandb
+            log_metrics = {
+                k: v for k, v in metrics.items() if k != "reasoning_text"
+            }
             wandb.log(
-                {f"{display_name}/train/{k}": v for k, v in metrics.items()},
+                {f"{display_name}/train/{k}": v for k, v in log_metrics.items()},
                 step=step,
             )
+
+            # Print training step details
+            gt_ans = batch["answer_str"][0] if "answer_str" in batch else "?"
+            print(
+                f"\n{'─' * 60}"
+                f"\n[Step {step}] loss={metrics['loss']:.3f}  "
+                f"reasoning_len={metrics.get('reasoning_len', '?')}  "
+                f"delim={metrics.get('found_delimiter', '?')}  "
+                f"tau={metrics.get('tau', '?'):.2f}"
+            )
+            if "reasoning_text" in metrics:
+                print(f"  GT answer: {gt_ans}")
+                print(f"  Reasoning: {metrics['reasoning_text'][:300]}")
 
             # Periodic validation
             if step % config.eval_every == 0:
@@ -1048,7 +1071,7 @@ def train_method(
                     tokenizer,
                     val_loader,
                     config,
-                    num_samples=100,
+                    num_samples=5,
                     split_name="val",
                 )
                 wandb.log(
@@ -1066,18 +1089,15 @@ def train_method(
                     results["best_val_step"] = step
 
                 print(
-                    f"\n  [Step {step}] Val accuracy: "
-                    f"{val_res['accuracy']:.3f} "
-                    f"({val_res['correct']}/{val_res['total']})"
+                    f"\n  === Val ({val_res['correct']}/{val_res['total']} correct) ==="
                 )
-                if val_res["samples"]:
-                    s = val_res["samples"][0]
+                for si, s in enumerate(val_res["samples"]):
+                    mark = "✓" if s["correct"] else "✗"
                     print(
-                        f"    Sample: pred={s['predicted']} "
-                        f"gt={s['ground_truth']} "
-                        f"{'✓' if s['correct'] else '✗'}"
+                        f"  [{si+1}] {mark}  pred={s['predicted']}  gt={s['ground_truth']}"
                     )
-                    print(f"    Output: {s['generated'][:150]}...")
+                    print(f"      {s['generated'][:200]}")
+                    print()
 
             step += 1
             pbar.update(1)
