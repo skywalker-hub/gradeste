@@ -101,13 +101,32 @@ class Config:
 # ============================================================================
 
 def extract_answer_from_text(text: str) -> Optional[str]:
-    """Extract numerical answer after #### from generated text."""
-    if ANSWER_DELIMITER not in text:
-        return None
-    answer_part = text.split(ANSWER_DELIMITER)[-1].strip()
-    match = re.match(r"(-?[\d,]+\.?\d*)", answer_part)
-    if match:
-        return match.group(1).replace(",", "").strip()
+    """Extract numerical answer from generated text using multiple patterns."""
+
+    # Pattern 1: \boxed{number}
+    m = re.search(r"\\boxed\{([^}]+)\}", text)
+    if m:
+        ans = m.group(1).replace(",", "").strip()
+        if re.match(r"-?[\d.]+$", ans):
+            return ans
+
+    # Pattern 2: "The (final) answer is NUMBER"
+    m = re.search(r"[Tt]he (?:final )?answer is[:\s]*(-?[\d,]+\.?\d*)", text)
+    if m:
+        return m.group(1).replace(",", "").strip()
+
+    # Pattern 3: #### followed directly by a number (skip #### Step, #### Reasoning, etc.)
+    matches = list(re.finditer(r"####\s*(-?[\d,]+\.?\d*)\s", text))
+    if matches:
+        return matches[-1].group(1).replace(",", "").strip()
+
+    # Pattern 4: last line contains just a number
+    for line in reversed(text.strip().splitlines()):
+        line = line.strip()
+        m = re.match(r"^(-?[\d,]+\.?\d*)$", line)
+        if m:
+            return m.group(1).replace(",", "").strip()
+
     return None
 
 
@@ -1058,7 +1077,7 @@ def train_method(
             )
             if "reasoning_text" in metrics:
                 print(f"  GT answer: {gt_ans}")
-                print(f"  Reasoning: {metrics['reasoning_text'][:300]}")
+                print(f"  Reasoning: {metrics['reasoning_text'][:600]}")
 
             # Periodic validation
             if step % config.eval_every == 0:
