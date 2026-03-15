@@ -922,7 +922,7 @@ def evaluate_math(
                 if len(samples) < 5:
                     samples.append(
                         {
-                            "generated": generated[:600],
+                            "generated": generated[:1500],
                             "predicted": predicted,
                             "ground_truth": gt_answers[i],
                             "correct": is_correct,
@@ -1076,7 +1076,7 @@ def train_method(
             )
             if "reasoning_text" in metrics:
                 print(f"  GT answer: {gt_ans}")
-                print(f"  Reasoning: {metrics['reasoning_text'][:600]}")
+                print(f"  Reasoning: {metrics['reasoning_text'][:1200]}")
 
             # Periodic validation
             if step % config.eval_every == 0:
@@ -1115,7 +1115,7 @@ def train_method(
                     print(
                         f"  [{si+1}] {mark}  pred={s['predicted']}  gt={s['ground_truth']}"
                     )
-                    print(f"      {s['generated'][:500]}")
+                    print(f"      {s['generated'][:1200]}")
                     print()
 
             step += 1
