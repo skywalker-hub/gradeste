@@ -57,7 +57,7 @@ class Config:
     learning_rate: float = 1e-5
     batch_size: int = 1
     gradient_accumulation_steps: int = 16
-    max_steps: int = 50
+    max_steps: int = 500
     eval_every: int = 1
 
     # Generation
@@ -1200,7 +1200,7 @@ def train_method(
 class Arguments:
     method: str = "all"
     base_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    max_steps: int = 50
+    max_steps: int = 500
     batch_size: int = 1
     gradient_accumulation_steps: int = 16
     learning_rate: float = 1e-5
