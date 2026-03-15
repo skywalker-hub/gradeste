@@ -35,6 +35,10 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_path", type=str, default=None)
     parser.add_argument("--max_steps", type=int, default=None)
     parser.add_argument("--output_dir", type=str, default="./results-gsm8k")
+    parser.add_argument("--sft_steps", type=int, default=None)
+    parser.add_argument(
+        "--skip_sft", action="store_true", help="Skip SFT stage"
+    )
     args = parser.parse_args()
 
     main(
@@ -43,4 +47,5 @@ if __name__ == "__main__":
         base_model=args.model_path,
         dataset_path=args.dataset_path,
         max_steps=args.max_steps,
+        sft_steps=0 if args.skip_sft else args.sft_steps,
     )

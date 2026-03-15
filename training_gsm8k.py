@@ -93,6 +93,12 @@ class Config:
     # Data splits
     train_size: int = 6000
 
+    # SFT stage
+    sft_steps: int = 200
+    sft_lr: float = 2e-5
+    sft_max_length: int = 768
+    sft_batch_size: int = 4
+
 
 # ============================================================================
 # MATH UTILITIES
@@ -141,6 +147,18 @@ def compute_math_reward(
     return 0.0
 
 
+def clean_gsm8k_solution(answer_text: str) -> str:
+    """Convert GSM8K reference answer to training format with \\boxed{}."""
+    cleaned = re.sub(r'<<[^>]*>>', '', answer_text)
+    cleaned = re.sub(
+        r'####\s*(.*?)$',
+        lambda m: f'\\boxed{{{m.group(1).strip()}}}',
+        cleaned,
+        flags=re.MULTILINE,
+    )
+    return cleaned.strip()
+
+
 # ============================================================================
 # GSM8K DATA MANAGEMENT
 # ============================================================================
@@ -163,6 +181,14 @@ def gsm8k_collate_fn(batch):
         "answer_token_ids": torch.stack([b["answer_token_ids"] for b in batch]),
         "answer_len": torch.tensor([b["answer_len"] for b in batch]),
         "answer_str": [b["answer_str"] for b in batch],
+    }
+
+
+def sft_collate_fn(batch):
+    return {
+        "input_ids": torch.stack([b["input_ids"] for b in batch]),
+        "attention_mask": torch.stack([b["attention_mask"] for b in batch]),
+        "labels": torch.stack([b["labels"] for b in batch]),
     }
 
 
@@ -196,6 +222,7 @@ class GSM8KDataSplits:
         self.train_data = GSM8KDataset(train_examples[:train_size])
         self.val_data = GSM8KDataset(train_examples[train_size:])
         self.test_data = GSM8KDataset(test_examples)
+        self._raw_train = raw_train[:train_size]
 
         print(
             f"GSM8K splits — train: {len(self.train_data)}, "
@@ -265,6 +292,63 @@ class GSM8KDataSplits:
             batch_size=batch_size,
             shuffle=False,
             collate_fn=gsm8k_collate_fn,
+        )
+
+    def _process_sft(self, example: dict) -> dict:
+        """Process one example for SFT: full reference solution with labels."""
+        question = example["question"]
+        solution = clean_gsm8k_solution(example["answer"])
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": solution},
+        ]
+        full_text = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        prompt_text = self.tokenizer.apply_chat_template(
+            messages[:2], tokenize=False, add_generation_prompt=True
+        )
+
+        max_len = self.config.sft_max_length
+        full_ids = self.tokenizer.encode(
+            full_text, truncation=True, max_length=max_len
+        )
+        prompt_len = len(
+            self.tokenizer.encode(prompt_text, truncation=True, max_length=max_len)
+        )
+        seq_len = len(full_ids)
+
+        labels = [-100] * prompt_len + full_ids[prompt_len:]
+        pad_id = self.tokenizer.pad_token_id or 0
+        pad_len = max_len - seq_len
+
+        if pad_len > 0:
+            input_ids = full_ids + [pad_id] * pad_len
+            attention_mask = [1] * seq_len + [0] * pad_len
+            labels = labels + [-100] * pad_len
+        else:
+            input_ids = full_ids[:max_len]
+            attention_mask = [1] * max_len
+            labels = labels[:max_len]
+
+        return {
+            "input_ids": torch.tensor(input_ids),
+            "attention_mask": torch.tensor(attention_mask),
+            "labels": torch.tensor(labels),
+        }
+
+    def get_sft_dataloader(self, batch_size: int) -> DataLoader:
+        """Build SFT dataloader from raw training examples."""
+        sft_examples = [
+            self._process_sft(ex)
+            for ex in tqdm(self._raw_train, desc="SFT data")
+        ]
+        return DataLoader(
+            GSM8KDataset(sft_examples),
+            batch_size=batch_size,
+            shuffle=True,
+            collate_fn=sft_collate_fn,
+            drop_last=True,
         )
 
 
@@ -940,6 +1024,94 @@ def evaluate_math(
 
 
 # ============================================================================
+# SFT STAGE
+# ============================================================================
+
+
+def sft_train(model, tokenizer, data_splits, config):
+    """Stage 1: SFT to teach the model output format (\\boxed{})."""
+    print(f"\n{'=' * 60}")
+    print("Stage 1: Supervised Fine-Tuning (Format Learning)")
+    print(f"{'=' * 60}\n")
+
+    sft_loader = data_splits.get_sft_dataloader(config.sft_batch_size)
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=config.sft_lr,
+    )
+
+    model.train()
+    pbar = tqdm(total=config.sft_steps, desc="SFT")
+    step = 0
+    running_loss = 0.0
+
+    while step < config.sft_steps:
+        for batch in sft_loader:
+            if step >= config.sft_steps:
+                break
+
+            input_ids = batch["input_ids"].to(config.device)
+            attention_mask = batch["attention_mask"].to(config.device)
+            labels = batch["labels"].to(config.device)
+
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                )
+            loss = outputs.loss
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in model.parameters() if p.requires_grad], 1.0
+            )
+            optimizer.step()
+            optimizer.zero_grad()
+
+            running_loss = (
+                0.95 * running_loss + 0.05 * loss.item()
+                if step > 0
+                else loss.item()
+            )
+            step += 1
+            pbar.update(1)
+            pbar.set_postfix({"loss": f"{running_loss:.3f}"})
+
+            if step % 50 == 0:
+                model.eval()
+                with torch.no_grad():
+                    sample = data_splits.val_data[0]
+                    ids = sample["input_ids"].unsqueeze(0).to(config.device)
+                    mask = sample["attention_mask"].unsqueeze(0).to(config.device)
+                    gen = model.generate(
+                        input_ids=ids,
+                        attention_mask=mask,
+                        max_new_tokens=256,
+                        do_sample=True,
+                        temperature=0.7,
+                        pad_token_id=tokenizer.pad_token_id,
+                    )
+                    text = tokenizer.decode(
+                        gen[0][ids.shape[1]:], skip_special_tokens=True
+                    )
+                    has_boxed = "\\boxed{" in text
+                    print(f"\n  [SFT Step {step}] format_ok={has_boxed}")
+                    print(f"  Output: {text[:500]}")
+                model.train()
+
+    pbar.close()
+    print(f"\nSFT complete. Final loss: {running_loss:.3f}")
+
+    sft_path = Path(config.output_dir) / "sft_checkpoint"
+    sft_path.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(sft_path)
+    print(f"SFT checkpoint saved to {sft_path}")
+
+    return model
+
+
+# ============================================================================
 # TRAINING LOOP
 # ============================================================================
 
@@ -1009,6 +1181,10 @@ def train_method(
     ref_model.eval()
     for p in ref_model.parameters():
         p.requires_grad = False
+
+    # Stage 1: SFT format learning (for gumbel/ste methods)
+    if method in ("gumbel", "ste") and config.sft_steps > 0:
+        policy = sft_train(policy, tokenizer, data_splits, config)
 
     train_loader = data_splits.get_train_dataloader(config.batch_size)
     val_loader = data_splits.get_val_dataloader(config.batch_size * 4)
@@ -1206,6 +1382,7 @@ class Arguments:
     learning_rate: float = 1e-5
     output_dir: str = "./results-gsm8k"
     seed: int = 42
+    sft_steps: int = 200
 
 
 def main(
@@ -1214,6 +1391,7 @@ def main(
     base_model: Optional[str] = None,
     dataset_path: Optional[str] = None,
     max_steps: Optional[int] = None,
+    sft_steps: Optional[int] = None,
 ):
     args = Arguments(output_dir=output_dir)
     if method:
@@ -1222,6 +1400,8 @@ def main(
         args.base_model = base_model
     if max_steps:
         args.max_steps = max_steps
+    if sft_steps is not None:
+        args.sft_steps = sft_steps
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -1234,6 +1414,7 @@ def main(
         output_dir=args.output_dir,
         seed=args.seed,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
+        sft_steps=args.sft_steps,
     )
 
     if not torch.cuda.is_available():
