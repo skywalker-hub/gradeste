@@ -1321,7 +1321,7 @@ def train_method(
         tokenizer,
         test_loader,
         config,
-        num_samples=500,
+        num_samples=len(data_splits.test_data),
         split_name="test",
     )
     wandb.log(
