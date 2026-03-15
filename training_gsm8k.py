@@ -57,7 +57,7 @@ class Config:
     learning_rate: float = 1e-5
     batch_size: int = 1
     gradient_accumulation_steps: int = 16
-    max_steps: int = 500
+    max_steps: int = 1500
     eval_every: int = 1
 
     # Generation
