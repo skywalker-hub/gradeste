@@ -34,10 +34,19 @@ import re
 ANSWER_DELIMITER = "\\boxed{"
 
 SYSTEM_PROMPT = (
-    "Solve the math problem step by step. Be concise. "
-    "Put your final numerical answer inside \\boxed{}. "
+    #"Solve the math problem step by step. Be concise. "
+    #"Put your final numerical answer inside \\boxed{}. "
+    #"Example: The total is 3 + 4 = 7. \\boxed{7}"
+
+    "A conversation between User and Assistant. The user asks a question, and "
+    "the assistant solves it. The assistant first thinks about the reasoning "
+    "process in the mind and then provides the user with the answer."
+    "Put your final numerical answer inside \\boxed{}."
     "Example: The total is 3 + 4 = 7. \\boxed{7}"
+
 )
+
+
 
 # ============================================================================
 # CONFIGURATION 训练设置
